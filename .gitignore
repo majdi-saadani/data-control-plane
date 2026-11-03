@@ -1,9 +1,20 @@
-.venv
+# Environnements virtuels
 .venv/
-.idea
-.idea/
+venv/
+
 # IDE
+.idea/
 .vscode/
+
+# Assistants IA (Claude Code, GitHub Copilot, MCP)
+CLAUDE.md
+CLAUDE.local.md
+.claude/
+.mcp.json
+.github/copilot-instructions.md
+.github/instructions/
+.github/prompts/
+.github/chatmodes/
 
 # Python
 __pycache__/
@@ -15,14 +26,11 @@ __pycache__/
 *.tfstate
 *.tfstate.backup
 .terraform.lock.hcl
+.build/
 
 # Secrets
 .env
 *.pem
 
-
-# internal files
+# Fichiers internes
 installer.md
-
-
-.build/
