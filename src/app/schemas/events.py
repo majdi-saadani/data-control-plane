@@ -11,6 +11,7 @@ class SendEventsRequest(BaseModel):
 
 class SendEventsResponse(BaseModel):
     stream_name: str
+    call_id: str = Field(description="Envelope call_id of every published record (= X-Request-ID)")
     generated: int
     duplicates: int
     negatives: int

@@ -1,0 +1,99 @@
+# CI/CD: unit tests + Terraform checks on every push/PR, then (push to develop only)
+# build the API image, push it to ECR and redeploy the ECS service.
+#
+# Prerequisites (one-time):
+#   1. terraform apply the dev environment (creates ECR, ECS and the GitHub deploy role)
+#   2. GitHub repo -> Settings -> Secrets and variables -> Actions -> Variables:
+#        AWS_DEPLOY_ROLE_ARN = <terraform output github_deploy_role_arn>
+# Authentication uses OIDC: no AWS access keys stored in GitHub.
+
+name: CI/CD
+
+on:
+  push:
+    branches: [develop, main]
+  pull_request:
+    branches: [develop, main]
+
+env:
+  AWS_REGION: eu-west-1
+  ECR_REPOSITORY: energy-control-plane-dev
+  ECS_CLUSTER: energy-control-plane-dev
+  ECS_SERVICE: energy-control-plane-api-dev
+
+jobs:
+  test:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Poetry
+        run: pipx install poetry==2.4.1
+
+      - name: Install dependencies
+        run: poetry install --no-interaction
+
+      - name: Run tests
+        run: poetry run pytest -q
+
+  terraform:
+    name: Terraform fmt + validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.13.5"
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive deployment/terraform
+
+      - name: terraform validate
+        working-directory: deployment/terraform/envs/dev
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+  deploy:
+    name: Build, push to ECR, deploy to ECS
+    needs: [test, terraform]
+    # Only real pushes to develop deploy (dev environment), and only once the infra exists
+    if: github.event_name == 'push' && github.ref == 'refs/heads/develop' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # OIDC token for AWS
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          IMAGE="$REGISTRY/$ECR_REPOSITORY"
+          docker build -t "$IMAGE:$IMAGE_TAG" -t "$IMAGE:latest" .
+          docker push "$IMAGE:$IMAGE_TAG"
+          docker push "$IMAGE:latest"
+
+      - name: Redeploy ECS service
+        run: |
+          aws ecs update-service --cluster "$ECS_CLUSTER" --service "$ECS_SERVICE" --force-new-deployment >/dev/null
+          aws ecs wait services-stable --cluster "$ECS_CLUSTER" --services "$ECS_SERVICE"
+          echo "Deployed $ECR_REPOSITORY:${{ github.sha }}"

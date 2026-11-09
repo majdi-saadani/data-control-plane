@@ -105,37 +105,3 @@ def generate_events(count: int = 20, seed: int | None = None) -> list[EnergyEven
 
     rng.shuffle(events)
     return events
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Generate synthetic energy sensor events.")
-    parser.add_argument("--count", type=int, default=20, help="Number of events to emit (default: 20)")
-    parser.add_argument("--seed", type=int, default=None, help="Random seed for reproducibility")
-    args = parser.parse_args()
-
-    events = generate_events(count=args.count, seed=args.seed)
-
-    for event in events:
-        print(json.dumps(event.to_dict(), ensure_ascii=False))
-
-    payloads = [event.to_dict() for event in events]
-    publish_events(events=payloads)
-
-
-    # Summary on stderr-like footer (kept on stdout for simplicity here).
-    unique_ids = {e.event_id for e in events}
-    negatives = sum(1 for e in events if e.power_kw < 0)
-    print(
-        f"\n--- {len(events)} events | {len(events) - len(unique_ids)} duplicates "
-        f"| {negatives} negative readings ---"
-    )
-
-
-if __name__ == "__main__":
-    main()
-
-# python -m events_publisher.energy_sensor.energy_sensor_publisher

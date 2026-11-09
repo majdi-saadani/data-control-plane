@@ -1,0 +1,10 @@
+# Copy to terraform.tfvars (ignored by git) and fill in.
+# The Databricks token is NOT put here: export TF_VAR_databricks_token=dapi... before terraform apply.
+
+allowed_cidrs   = ["203.0.113.10/32"] # your public IP (curl ifconfig.me)
+databricks_host = "https://dbc-xxxxxxxx-xxxx.cloud.databricks.com"
+
+# api_desired_count = 0              # pause the API without destroying
+# use_fargate_spot  = true
+# create_github_oidc_provider = false  # if the account already has token.actions.githubusercontent.com
+# existing_github_oidc_provider_arn = "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com"

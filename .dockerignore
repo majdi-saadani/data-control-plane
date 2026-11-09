@@ -1,0 +1,16 @@
+.git
+.github
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+tests
+deployment
+docs
+.env
+.env.example
+*.md
+.idea
+.vscode
+.claude

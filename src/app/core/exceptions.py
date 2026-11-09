@@ -11,6 +11,24 @@ class AppError(Exception):
         self.message = message
 
 
+class NotFoundError(AppError):
+    """The requested resource (pipeline, run...) does not exist."""
+
+    status_code = 404
+
+
+class ConflictError(AppError):
+    """The request conflicts with the current state (e.g. pipeline already running)."""
+
+    status_code = 409
+
+
+class ConfigurationError(AppError):
+    """The application configuration (pipelines.yaml...) is invalid."""
+
+    status_code = 500
+
+
 class ServiceNotConfiguredError(AppError):
     """An external dependency is not configured (e.g. missing Databricks token)."""
 
