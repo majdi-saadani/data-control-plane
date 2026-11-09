@@ -1,4 +1,4 @@
-"""Kinesis consumer: dedup + filter + write to DynamoDB."""
+"""Kinesis consumer: unwrap + dedup + filter + write to DynamoDB."""
 
 import base64
 import json
@@ -22,11 +22,26 @@ def _get_table():
     return table
 
 
+def unwrap(record: dict[str, Any]) -> dict[str, Any]:
+    """Return the measurement from an envelope {call_id, type, emitted_at, data}.
+
+    Legacy records (the measurement at top level, no `data`) are accepted as-is,
+    so publisher and consumer can be deployed independently.
+    """
+    if isinstance(record.get("data"), dict):
+        energy_event = dict(record["data"])
+        # Keep the envelope metadata on the stored item for traceability
+        energy_event["call_id"] = record.get("call_id")
+        energy_event["emitted_at"] = record.get("emitted_at")
+        return energy_event
+    return record
+
+
 def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, int]:
     """Process a batch of Kinesis records.
 
     Pipeline per record:
-    1. Decode & parse (rejected if malformed -> poison pill protection)
+    1. Decode, unwrap & parse (rejected if malformed -> poison pill protection)
     2. Dedup on event_id (within batch)
     3. Filter negative power readings (faulty sensor)
     4. Batch write valid events to DynamoDB (idempotent on sensor_id + event_timestamp)
@@ -38,15 +53,15 @@ def lambda_handler(event: dict[str, Any], context: Any) -> dict[str, int]:
     rejected = 0
 
     for record in event["Records"]:
-        # 1. Decode + minimal validation (poison-pill protection)
+        # 1. Decode + unwrap + minimal validation (poison-pill protection)
         try:
             payload = base64.b64decode(record["kinesis"]["data"])
-            energy_event = json.loads(payload)
+            energy_event = unwrap(json.loads(payload))
             event_id = energy_event["event_id"]
             power_kw = energy_event["measurements"]["power_kw"]
             # Align the field with the table's range key
             energy_event["event_timestamp"] = energy_event["timestamp"]
-        except (KeyError, json.JSONDecodeError, TypeError) as exc:
+        except (KeyError, json.JSONDecodeError, TypeError, AttributeError) as exc:
             rejected += 1
             print(f"REJECTED: {exc!r}")
             continue

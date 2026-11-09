@@ -25,6 +25,7 @@ __pycache__/
 .terraform/
 *.tfstate
 *.tfstate.backup
+terraform.tfvars
 .terraform.lock.hcl
 .build/
 
@@ -34,3 +35,5 @@ __pycache__/
 
 # Fichiers internes
 installer.md
+
+INSTRUCTIONS.md

@@ -15,9 +15,9 @@ def stub_dynamodb(monkeypatch):
     monkeypatch.setattr(handler, "write_to_dynamodb", lambda events: len(events))
 
 
-def make_kinesis_record(energy_event: dict) -> dict:
-    data = base64.b64encode(json.dumps(energy_event).encode("utf-8")).decode("utf-8")
-    return {"kinesis": {"data": data, "partitionKey": energy_event.get("sensor_id", "unknown")}}
+def make_kinesis_record(payload: dict) -> dict:
+    data = base64.b64encode(json.dumps(payload).encode("utf-8")).decode("utf-8")
+    return {"kinesis": {"data": data, "partitionKey": "SENS-TEST-0001"}}
 
 
 def make_event(event_id: str, power_kw: float) -> dict:
@@ -29,16 +29,20 @@ def make_event(event_id: str, power_kw: float) -> dict:
     }
 
 
+def make_envelope(event: dict, call_id: str = "call-1") -> dict:
+    return {"call_id": call_id, "type": "energy.measurement", "emitted_at": "2026-07-06T10:00:01.000Z", "data": event}
+
+
 def test_dedup_filter_and_reject():
     malformed = {"kinesis": {"data": base64.b64encode(b'{"oops": true}').decode("utf-8")}}
 
     batch = {
         "Records": [
-            make_kinesis_record(make_event("aaa", 42.5)),   # valid
-            make_kinesis_record(make_event("bbb", -10.0)),  # negative -> filtered
-            make_kinesis_record(make_event("aaa", 42.5)),   # duplicate -> dropped
-            make_kinesis_record(make_event("ccc", 33.1)),   # valid
-            malformed,                                       # invalid schema -> rejected
+            make_kinesis_record(make_envelope(make_event("aaa", 42.5))),   # valid
+            make_kinesis_record(make_envelope(make_event("bbb", -10.0))),  # negative -> filtered
+            make_kinesis_record(make_envelope(make_event("aaa", 42.5))),   # duplicate -> dropped
+            make_kinesis_record(make_event("ccc", 33.1)),                  # legacy (no envelope) -> valid
+            malformed,                                                      # invalid schema -> rejected
         ]
     }
 
@@ -51,6 +55,19 @@ def test_dedup_filter_and_reject():
         "rejected": 1,
         "written": 2,
     }
+
+
+def test_envelope_is_unwrapped_and_traced(monkeypatch):
+    written: list[dict] = []
+    monkeypatch.setattr(handler, "write_to_dynamodb", lambda events: written.extend(events) or len(events))
+
+    lambda_handler({"Records": [make_kinesis_record(make_envelope(make_event("aaa", 1.0), call_id="call-9"))]},
+                   context=None)
+
+    assert written[0]["event_id"] == "aaa"
+    assert written[0]["event_timestamp"] == "2026-07-06T10:00:00.000Z"
+    assert written[0]["call_id"] == "call-9"
+    assert "data" not in written[0]
 
 
 def test_empty_batch():

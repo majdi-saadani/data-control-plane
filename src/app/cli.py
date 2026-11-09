@@ -6,10 +6,12 @@ Usage (from the repo root):
 
 import argparse
 import json
+import uuid
 
 from app.api.dependencies import get_event_sender
 from app.core.config import get_settings
 from app.core.logging import configure_logging
+from app.domain.envelope import wrap
 from app.domain.event_generator import generate_events
 from app.schemas.events import SendEventsRequest
 
@@ -22,13 +24,14 @@ def main() -> None:
     args = parser.parse_args()
 
     configure_logging()
+    call_id = f"cli-{uuid.uuid4()}"
 
     if args.dry_run:
         for event in generate_events(count=args.count, seed=args.seed):
-            print(json.dumps(event.to_dict(), ensure_ascii=False))
+            print(json.dumps(wrap(event.to_dict(), call_id=call_id), ensure_ascii=False))
 
     service = get_event_sender(get_settings())
-    result = service.send(SendEventsRequest(count=args.count, seed=args.seed, dry_run=args.dry_run))
+    result = service.send(SendEventsRequest(count=args.count, seed=args.seed, dry_run=args.dry_run), call_id=call_id)
     print(result.model_dump_json(indent=2))
 
 

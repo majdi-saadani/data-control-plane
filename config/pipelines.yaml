@@ -1,0 +1,71 @@
+# Pipeline definitions executed by the control plane (GET /pipelines to list them).
+#
+# pipelines:
+#   <pipeline-name>:
+#     description: free text
+#     steps:                       # run in order; a step starts only if the previous one succeeded
+#       - name: <step-name>
+#         mode: sequential | parallel   # how the tasks of this step run (default: sequential)
+#         tasks:
+#           - name: <task-name>
+#             type: databricks_job
+#             job_name: <name shown in the Databricks UI>   # or job_id: 123
+#             parameters: {key: value}                      # job_parameters for run-now (optional)
+#             timeout_minutes: 60                           # optional, default from settings
+#           - name: <task-name>
+#             type: lambda
+#             function_name: <AWS Lambda name>
+#             payload: {key: value}                         # run_id and call_id are added automatically
+#
+# TODO: replace the job_name placeholders below with the real Databricks job names.
+
+pipelines:
+
+  energy-medallion:
+    description: "Generate sensor events, then run the bronze -> silver -> gold Databricks jobs."
+    steps:
+      - name: generate
+        mode: sequential
+        tasks:
+          - name: generate-events
+            type: lambda
+            function_name: energy-event-generator-dev
+            payload:
+              count: 200
+
+      - name: bronze
+        mode: parallel
+        tasks:
+          - name: ingest-measurements
+            type: databricks_job
+            job_name: energy_bronze_ingestion          # TODO real ingestion job name
+            parameters:
+              source: kinesis
+            timeout_minutes: 30
+
+      - name: silver
+        mode: parallel
+        tasks:
+          - name: business-measurements
+            type: databricks_job
+            job_name: energy_silver_business_layer     # TODO real business-layer job name
+            timeout_minutes: 30
+
+      - name: gold
+        mode: sequential
+        tasks:
+          - name: kpi-aggregation
+            type: databricks_job
+            job_name: energy_gold_kpis                 # TODO real gold job name
+            timeout_minutes: 30
+
+  generate-only:
+    description: "Only trigger the event generator Lambda (smoke test of the hot path)."
+    steps:
+      - name: generate
+        tasks:
+          - name: generate-events
+            type: lambda
+            function_name: energy-event-generator-dev
+            payload:
+              count: 50

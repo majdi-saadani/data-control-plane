@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -18,6 +19,11 @@ logger = logging.getLogger(__name__)
 MAX_RECORDS_PER_CALL = 500
 
 
+def default_partition_key(envelope: dict[str, Any]) -> str:
+    """PartitionKey = sensor_id of the wrapped event (per-sensor ordering)."""
+    return envelope["data"]["sensor_id"]
+
+
 @dataclass(frozen=True, slots=True)
 class PublishResult:
     sent: int
@@ -29,29 +35,27 @@ class KinesisClient:
         self.stream_name = stream_name
         self._client = boto_client or boto3.client("kinesis", region_name=region)
 
-    def publish(self, events: list[dict[str, Any]], partition_key_field: str = "sensor_id") -> PublishResult:
-        """Send events in chunks of 500. PartitionKey = sensor_id (per-sensor ordering)."""
+    def publish(self, records: list[dict[str, Any]],
+                partition_key: Callable[[dict[str, Any]], str] = default_partition_key) -> PublishResult:
+        """Send records in chunks of 500."""
         sent = failed = 0
 
-        for start in range(0, len(events), MAX_RECORDS_PER_CALL):
-            chunk = events[start:start + MAX_RECORDS_PER_CALL]
-            records = [
-                {
-                    "Data": json.dumps(event).encode("utf-8"),
-                    "PartitionKey": event[partition_key_field],
-                }
-                for event in chunk
+        for start in range(0, len(records), MAX_RECORDS_PER_CALL):
+            chunk = records[start:start + MAX_RECORDS_PER_CALL]
+            entries = [
+                {"Data": json.dumps(record).encode("utf-8"), "PartitionKey": partition_key(record)}
+                for record in chunk
             ]
             try:
-                response = self._client.put_records(StreamName=self.stream_name, Records=records)
+                response = self._client.put_records(StreamName=self.stream_name, Records=entries)
             except (BotoCoreError, ClientError) as exc:
                 raise ExternalServiceError(f"put_records failed on {self.stream_name}: {exc}") from exc
 
             chunk_failed = response["FailedRecordCount"]
             failed += chunk_failed
-            sent += len(records) - chunk_failed
+            sent += len(entries) - chunk_failed
 
-        logger.info("Sent: %d/%d | Failed: %d", sent, len(events), failed)
+        logger.info("Sent: %d/%d | Failed: %d", sent, len(records), failed)
         return PublishResult(sent=sent, failed=failed)
 
     def read_from_start(self, shard_id: str = "shardId-000000000000", limit: int = 100) -> list[dict[str, Any]]:
@@ -62,15 +66,15 @@ class KinesisClient:
             ShardIteratorType="TRIM_HORIZON",
         )["ShardIterator"]
 
-        events: list[dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         while iterator:
             response = self._client.get_records(ShardIterator=iterator, Limit=limit)
-            records = response["Records"]
-            events.extend(json.loads(record["Data"]) for record in records)
+            batch = response["Records"]
+            records.extend(json.loads(record["Data"]) for record in batch)
 
-            if not records and response.get("MillisBehindLatest", 0) == 0:
+            if not batch and response.get("MillisBehindLatest", 0) == 0:
                 break
             iterator = response.get("NextShardIterator")
 
-        logger.info("%d records read from %s", len(events), self.stream_name)
-        return events
+        logger.info("%d records read from %s", len(records), self.stream_name)
+        return records
